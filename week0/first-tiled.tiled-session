@@ -1,0 +1,75 @@
+{
+    "activeFile": "first_game/assets/mapv2.json",
+    "expandedProjectPaths": [
+        ".",
+        "first_game/target",
+        "first_game/assets",
+        "first_game",
+        "first_game/target/debug/.fingerprint"
+    ],
+    "file.lastUsedOpenFilter": "All Files (*)",
+    "fileStates": {
+        "Basic.tsx": {
+            "dynamicWrapping": true,
+            "scaleInDock": 2,
+            "scaleInEditor": 5.5
+        },
+        "basic_single_image.tsx": {
+            "dynamicWrapping": false,
+            "scaleInDock": 1.5,
+            "scaleInEditor": 4
+        },
+        "first_game/assets/basic_single_image.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "first_game/assets/mapv2.json": {
+            "scale": 1.5675,
+            "selectedLayer": 2,
+            "viewCenter": {
+                "x": 322.8070175438597,
+                "y": 235.725677830941
+            }
+        },
+        "first_map.tmx": {
+            "scale": 1.5,
+            "selectedLayer": 2,
+            "viewCenter": {
+                "x": 337.33333333333337,
+                "y": 200.33333333333331
+            }
+        },
+        "mapv2.json": {
+            "scale": 1.045,
+            "selectedLayer": 2,
+            "viewCenter": {
+                "x": 354.0669856459331,
+                "y": 83.73205741626799
+            }
+        },
+        "new_tilesetd.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 3
+        },
+        "tileset.tsx": {
+            "dynamicWrapping": false,
+            "scaleInDock": 2,
+            "scaleInEditor": 4
+        }
+    },
+    "openFiles": [
+        "first_game/assets/mapv2.json",
+        "first_game/assets/basic_single_image.tsx"
+    ],
+    "project": "",
+    "recentFiles": [
+        "first_game/assets/basic_single_image.tsx",
+        "first_game/assets/mapv2.json",
+        "tileset.tsx",
+        "Basic.tsx",
+        "first_map.tmx",
+        "mapv2.json",
+        "basic_single_image.tsx",
+        "new_tilesetd.tsx"
+    ]
+}
