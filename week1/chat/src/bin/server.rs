@@ -1,53 +1,214 @@
-use crate::mpsc::{Receiver, Sender};
+#![allow(warnings)]
+use ::chrono::{DateTime, Utc};
+use futures::stream::{ SplitStream, SplitSink };
 use futures::{SinkExt, StreamExt};
-use futures::stream::SplitStream;
-use log::{error, info};
+use log::{error, info, log};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, oneshot};
-use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::protocol::Message};
-use::chrono::{DateTime, Utc};
+use tokio_tungstenite::{accept_async, tungstenite::protocol::Message, WebSocketStream};
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use uuid::{Bytes, Uuid};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Db = Arc<Mutex<HashMap<u128, Vec<String>>>>;
+
+pub type ArcWithHashofVector<T> = Arc<Mutex<HashMap<u128, Vec<T>>>>;
+pub type ArcWithHashof<T> = Arc<Mutex<HashMap<u128, T>>>;
+pub type Time = DateTime<Utc>;
+
+pub type UserMessagesType = Arc<Mutex<BTreeMap<Time, UserMessage>>>;
+pub type OptionMessages = Option<BTreeMap<Time, UserMessage>>;
+
 pub type Responder<T> = oneshot::Sender<Result<T, Error>>;
 
+// pub type DbObjResponse = Responder<Option<Bytes>>;
+pub type DbObjResponse<T> = tokio::sync::oneshot::Sender<T>;
+
 #[derive(Debug)]
-enum DbCommand {
-    Get {
-        key: String,
-        resp: Responder<Option<Bytes>>,
+enum DatabaseMessage {
+    FindUser {
+        id: u128,
+        resp: DbObjResponse<User>,
     },
-    Set {
-        key: String,
-        val: String,
-        resp: Responder<()>,
+    AddUser {
+        user: User,
+    },
+    GetChatRoomInfo {
+        id: usize,
+        resp: DbObjResponse<DatabaseMessage>,
+    },
+    GetAllMsgRoom {
+        id: usize,
+        resp: DbObjResponse<OptionMessages>,
+    },
+    GetMsgAfter {
+        id: usize,
+        time: Time,
+        resp: DbObjResponse<OptionMessages>,
+    },
+    AddMsg {
+        msg: UserMessage,
+    },
+    ResponseText {
+        text: String,
     },
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub enum MessageType {
     Login,
-    ChangeChannel,
     ExitChannel,
     Message,
     ExitApp,
 }
 
-
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct UserMessage {
-    time: DateTime<Utc>,
+    time: Time,
     text: String,
     from: u128,
     username: String,
     type_msg: MessageType,
+}
+
+impl UserMessage {
+    pub fn new(
+        time: Time,
+        text: String,
+        from: u128,
+        username: String,
+        type_msg: MessageType,
+    ) -> UserMessage {
+        UserMessage {
+            time,
+            text,
+            from,
+            username,
+            type_msg,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Room {
+    name: String,
+    number: u32,
+    capacity: u32,
+    messages: UserMessagesType,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct User {
+    name: String,
+    id: u128,
+    username: String,
+}
+
+#[derive(Debug)]
+pub struct Database {
+    chat_rooms: Vec<Room>,
+    users: ArcWithHashof<User>,
+}
+
+impl Database {
+    pub fn new() -> Self {
+        let user_messages: UserMessagesType = Arc::new(Mutex::new(BTreeMap::new()));
+        let now = Utc::now();
+        let message = UserMessage {
+            time: now,
+            text: "Hello, world!".to_string(),
+            from: 123456,
+            username: "Alice".to_string(),
+            type_msg: MessageType::Message,
+        };
+
+        {
+            user_messages.lock().unwrap().insert(now, message);
+        }
+
+        let chat_rooms = vec![Room {
+            name: "Room1".to_string(),
+            number: 1,
+            capacity: 10,
+            messages: user_messages,
+        }];
+
+
+        let users = Arc::new(Mutex::new(HashMap::new()));
+
+        let me_user = User {
+            name: "Tim".to_string(),
+            id: 40093918_u128,
+            username: "KapJ1coH".to_string(),
+        };
+
+        {
+            users.lock().unwrap().insert(40093918_u128, me_user);
+        }
+
+        Database { chat_rooms, users }
+    }
+
+    async fn manager(self: &mut Database, mut receiver: Receiver<DatabaseMessage>) {
+        while let Some(cmd) = receiver.recv().await {
+            match cmd {
+                DatabaseMessage::GetChatRoomInfo { id, resp } => {
+                    // todo make this better
+                    let response = format!(
+                        "name: {}, number: {}, capacity: {}",
+                        self.chat_rooms[id].name,
+                        self.chat_rooms[id].number,
+                        self.chat_rooms[id].capacity
+                    );
+                    if resp
+                        .send(DatabaseMessage::ResponseText { text: response })
+                        .is_err()
+                    {
+                        println!("The receiver dropped");
+                    }
+                }
+                DatabaseMessage::FindUser { id, resp } => {
+                    let users = &self.users.lock().unwrap();
+                    if let Some(user) = users.get(&id) {
+                        if resp.send(user.clone()).is_err() {
+                            println!("The receiver dropped");
+                        }
+                    }
+                }
+                DatabaseMessage::GetAllMsgRoom { id, resp } => {
+                    let messages = self.chat_rooms[id].messages.lock().unwrap();
+
+                    if resp.send(Some(messages.clone())).is_err() {
+                        println!("The receiver dropped");
+                    }
+
+                }
+                DatabaseMessage::GetMsgAfter { id, time, resp } => {
+                    let messages = self.chat_rooms[id].messages.lock().unwrap();
+                    
+                    let messages_after = messages.clone().split_off(&time);
+
+                    if resp.send(Some(messages_after)).is_err() {
+                        println!("The receiver dropped");
+                    }
+                }
+
+                _ => (),
+            }
+        }
+    }
+}
+
+impl Default for Database {
+    fn default() -> Self {
+        Database::new()
+    }
 }
 
 #[tokio::main]
@@ -61,13 +222,12 @@ async fn main() {
 
     let listener = TcpListener::bind(&addr).await.expect("Failed to bind");
 
-    let (sender, mut receiver) = mpsc::channel::<DbCommand>(64);
+    let (sender, mut receiver) = mpsc::channel::<DatabaseMessage>(64);
 
+    let mut database = Database::new();
     tokio::spawn(async move {
-        database(receiver).await;
+        database.manager(receiver).await;
     });
-
-    let db: Db = Arc::new(Mutex::new(HashMap::new()));
 
     info!("Listening on: {}", addr);
 
@@ -81,15 +241,14 @@ async fn main() {
     }
 }
 
-async fn database(mut receiver: Receiver<DbCommand>) {}
-
-
-async fn get_user_id(mut receiver: SplitStream<WebSocketStream<TcpStream>>) -> u128 {
-    let Some(message_received) = receiver.next().await else { todo!() };
+async fn get_user_id(mut receiver: &mut SplitStream<WebSocketStream<TcpStream>>) -> u128 {
+    let Some(message_received) = receiver.next().await else {
+        todo!()
+    };
     match message_received {
         Ok(Message::Text(text)) => {
             let message: UserMessage = serde_json::from_str(&text).unwrap();
-            if message.type_msg != MessageType::Login{
+            if message.type_msg != MessageType::Login {
                 panic!("Not implemented yet");
             }
             let user_id: u128 = message.from;
@@ -98,7 +257,6 @@ async fn get_user_id(mut receiver: SplitStream<WebSocketStream<TcpStream>>) -> u
         Ok(_) => panic!(),
         Err(_) => panic!(),
     }
-
 }
 
 async fn check_user_exists(user_id: u128) -> bool {
@@ -113,9 +271,9 @@ async fn check_user_exists(user_id: u128) -> bool {
 async fn user_select_room() -> u32 {
     // TODO implement this
     return 0;
-} 
+}
 
-async fn connected_user(stream: TcpStream, sender: Sender<DbCommand>) {
+async fn connected_user(stream: TcpStream, database_messenger: Sender<DatabaseMessage>) {
     let ws_stream = match accept_async(stream).await {
         Ok(ws) => ws,
         Err(e) => {
@@ -125,21 +283,114 @@ async fn connected_user(stream: TcpStream, sender: Sender<DbCommand>) {
     };
     let (mut sender, mut receiver) = ws_stream.split();
 
-    let user_id: u128 = get_user_id(receiver).await;
+    let user_id: u128 = get_user_id(&mut receiver).await;
 
     let user_exists = check_user_exists(user_id).await;
 
     if !user_exists {
         panic!();
-    } 
+    }
 
     let room_number = user_select_room().await;
 
-    // load room, kinda like a state machine? 
+    let (room_info_tx, room_info_rx) = oneshot::channel::<DatabaseMessage>();
+    database_messenger
+        .send(DatabaseMessage::GetChatRoomInfo {
+            id: room_number as usize,
+            resp: room_info_tx,
+        })
+        .await
+        .unwrap();
+
+    let room_info = room_info_rx.await;
+    println!("GOT = {:?}", room_info);
+
+    let (get_user_tx, get_user_rx) = oneshot::channel::<User>();
+    database_messenger
+        .send(DatabaseMessage::FindUser {
+            id: 40093918_u128,
+            resp: get_user_tx,
+        })
+        .await
+        .unwrap();
+
+    let user: User = get_user_rx.await.unwrap();
+
+    println!("GOT = {:?}", user);
+
+
+    enter_room(room_number as usize, database_messenger, sender, receiver).await;
+}
+
+async fn enter_room(
+    room_number: usize,
+    database_messenger: Sender<DatabaseMessage>,
+    mut sender: SplitSink<WebSocketStream<TcpStream>, Message>,
+    mut receiver: SplitStream<WebSocketStream<TcpStream>>,
+) {
+    println!("Entered the room {}", room_number);
+
+    let (get_all_messages_tx, get_all_messages_rx) = oneshot::channel::<OptionMessages>();
+    database_messenger
+        .send(DatabaseMessage::GetAllMsgRoom {
+            id: room_number,
+            resp: get_all_messages_tx,
+        })
+        .await
+        .unwrap();
+
+    let messages = get_all_messages_rx.await.unwrap().unwrap();
+
+    println!("GOT all msgs = {:?}", messages);
+
+    let (last_message_time_received, _) = messages.last_key_value().unwrap();
+    println!("GOT last message = {:?}", last_message_time_received);
+
+
+    while let Some(msg) = receiver.next().await {
+        match msg {
+            Ok(Message::Text(text)) => {
+                let message: UserMessage = serde_json::from_str(&text).unwrap();
+                let message_type = &message.type_msg;
+
+                // #[derive(Serialize, Deserialize, Debug)]
+                // pub struct UserMessage {
+                //     time: Time,
+                //     text: String,
+                //     from: u128,
+                //     username: String,
+                //     type_msg: MessageType,
+                // }
+
+                match message_type {
+                    MessageType::Message => {
+                        println!(
+                            "New message recieved from: {} on channel: {}",
+                            message.from, room_number
+                        );
+                        database_messenger
+                            .send(DatabaseMessage::AddMsg { msg: message })
+                            .await
+                            .unwrap();
+                    }
+                    MessageType::ExitChannel => {
+                        todo!();
+                    }
+                    MessageType::ExitApp => {
+                        todo!();
+                    }
+                    MessageType::Login => {
+                        panic!("Wrong command in this context");
+                    }
+                };
+            }
+            Ok(_) => panic!(),
+            Err(_) => panic!(),
+        };
+    }
+
+    // load room, kinda like a state machine?
     // when joined, start a loop where user send msgs and gets updates
-
-
-
 
     // while let Some(msg) = receiver.next().await {
     //     match msg {

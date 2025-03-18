@@ -1,10 +1,13 @@
 
+use chrono::Utc;
 use futures::SinkExt;
 use futures::StreamExt;
+use server::MessageType;
+use server::UserMessage;
 // use tokio_tungstenite::tungstenite::http::Request;
 use tokio_tungstenite::{connect_async, tungstenite::{client::IntoClientRequest, Message}};
 // use uuid::{Uuid};
-
+mod server;
 
 
 
@@ -23,10 +26,31 @@ async fn main() {
     
     let (mut sender, mut receiver) = ws_stream.split();
 
-    sender.send(Message::Text("Test".into())).await.unwrap();
+    let usr_msg = UserMessage::new(
+        Utc::now(),
+        "Login".to_string(),
+        my_id,
+        "Tim".to_string(),
+        MessageType::Login,
+    );
 
-    let msg = receiver.next().await.unwrap();
-    println!("{:?}", msg);
+    sender.send(Message::Text(serde_json::to_string(&usr_msg).unwrap().into())).await.unwrap();
+
+    // let msg = receiver.next().await.unwrap();
+    // println!("{:?}", msg);
+
+    let usr_msg = UserMessage::new(
+        Utc::now(),
+        "New Message".to_string(),
+        my_id,
+        "Tim".to_string(),
+        MessageType::Message,
+    );
+
+
+
+
+    sender.send(Message::Text(serde_json::to_string(&usr_msg).unwrap().into())).await.unwrap();
 
     sender.send(Message::Close(None)).await.unwrap();
 
